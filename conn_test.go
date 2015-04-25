@@ -2,11 +2,12 @@ package stomp
 
 import (
 	"fmt"
+	"io"
+	"time"
+
 	. "gopkg.in/check.v1"
 	"gopkg.in/stomp.v1/frame"
 	"gopkg.in/stomp.v1/testutil"
-	"io"
-	"time"
 )
 
 type fakeReaderWriter struct {

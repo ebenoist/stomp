@@ -290,6 +290,7 @@ func processLoop(c *Conn, writer *Writer) {
 				if id, ok := f.Contains(frame.ReceiptId); ok {
 					if ch, ok := channels[id]; ok {
 						ch <- f
+						log.Println("Closing this channel")
 						delete(channels, id)
 						close(ch)
 					}
@@ -313,11 +314,11 @@ func processLoop(c *Conn, writer *Writer) {
 				return
 
 			case frame.MESSAGE:
-				if id, ok := f.Contains(frame.Subscription); ok {
-					if ch, ok := channels[id]; ok {
+				if dest, ok := f.Contains(frame.Destination); ok {
+					if ch, ok := channels[dest]; ok {
 						ch <- f
 					} else {
-						log.Println("ignored MESSAGE for subscription", id)
+						log.Println("ignored MESSAGE for subscription", dest)
 					}
 				}
 			}
@@ -342,14 +343,14 @@ func processLoop(c *Conn, writer *Writer) {
 
 			switch req.Frame.Command {
 			case frame.SUBSCRIBE:
-				id, _ := req.Frame.Contains(frame.Id)
-				channels[id] = req.C
+				dest, _ := req.Frame.Contains(frame.Destination)
+				channels[dest] = req.C
 			case frame.UNSUBSCRIBE:
-				id, _ := req.Frame.Contains(frame.Id)
+				dest, _ := req.Frame.Contains(frame.Destination)
 				// is this trying to be too clever -- add a receipt
 				// header so that when the server responds with a
 				// RECEIPT frame, the corresponding channel will be closed
-				req.Frame.Set(frame.Receipt, id)
+				req.Frame.Set(frame.Receipt, dest)
 			}
 
 			// frame to send
@@ -488,18 +489,27 @@ func (c *Conn) sendFrameWithReceipt(f *Frame) error {
 // will be received by this subscription. A subscription has a channel
 // on which the calling program can receive messages.
 func (c *Conn) Subscribe(destination string, ack AckMode) (*Subscription, error) {
+	return c.SubscribeWithHeaders(destination, ack, NewHeader())
+}
+
+func (c *Conn) SubscribeWithHeaders(destination string, ack AckMode, userDefined *Header) (*Subscription, error) {
 	ch := make(chan *Frame)
-	id := allocateId()
-	request := writeRequest{
-		Frame: NewFrame(frame.SUBSCRIBE,
-			frame.Id, id,
-			frame.Destination, destination,
-			frame.Ack, ack.String()),
-		C: ch,
+	headers := userDefined.Clone()
+
+	if _, ok := headers.Contains(frame.Id); !ok {
+		headers.Add(frame.Id, allocateId())
 	}
 
+	headers.Add(frame.Destination, destination)
+	headers.Add(frame.Ack, ack.String())
+
+	f := NewFrame(frame.SUBSCRIBE)
+	f.Header = headers
+
+	request := writeRequest{Frame: f, C: ch}
+
 	sub := &Subscription{
-		id:          id,
+		id:          headers.Get(frame.Id),
 		destination: destination,
 		conn:        c,
 		ackMode:     ack,
